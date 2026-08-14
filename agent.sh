@@ -8,6 +8,31 @@ readonly AGENT_VERSION="0.1.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 
 WORK_DIR=""
+EXECUTION_ID=""
+START_TIME=0
+END_TIME=0
+
+LOCK_FILE="/tmp/opsbridge.lock"
+LOCK_FD=200
+LOCK_DIR=""
+
+acquire_lock() {
+    if command -v flock >/dev/null 2>&1; then
+        eval "exec $LOCK_FD>$LOCK_FILE"
+
+        if ! flock -n "$LOCK_FD"; then
+            die "Another Operations Bridge execution is already running"
+        fi
+
+        return
+    fi
+
+    LOCK_DIR="${LOCK_FILE}.dir"
+
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        die "Another Operations Bridge execution is already running"
+    fi
+}
 
 log() {
     local level="$1"
@@ -51,6 +76,10 @@ setup_workspace() {
 cleanup() {
     if [[ -n "${WORK_DIR:-}" && -d "$WORK_DIR" ]]; then
         rm -rf "$WORK_DIR"
+    fi
+
+    if [[ -n "${LOCK_DIR:-}" && -d "$LOCK_DIR" ]]; then
+        rmdir "$LOCK_DIR"
     fi
 }
 
@@ -98,9 +127,31 @@ Examples:
 EOF
 }
 
+generate_execution_id() {
+    printf 'EXEC-%s-%s' \
+        "$(date '+%Y%m%d%H%M%S')" \
+        "$$"
+}
+
+start_timer() {
+    START_TIME="$(date +%s%3N)"
+}
+
+stop_timer() {
+    END_TIME="$(date +%s%3N)"
+}
+
+duration_ms() {
+    printf '%s' "$((END_TIME - START_TIME))"
+}
+
 main() {
+    acquire_lock
+    
     local command="${1:-}"
     local target="${2:-}"
+
+    EXECUTION_ID="$(generate_execution_id)"
 
     if [[ -z "$command" ]]; then
         usage
@@ -119,14 +170,21 @@ main() {
     validate_target "$target"
 
     setup_workspace
+    info "Execution ID: $EXECUTION_ID"
 
     case "$command" in
         health)
+            start_timer
             health_host
+            stop_timer
+            emit_health_result
             ;;
 
         inventory)
+            start_timer
             inventory_host
+            stop_timer
+            emit_inventory_result
             ;;
     esac
 }
