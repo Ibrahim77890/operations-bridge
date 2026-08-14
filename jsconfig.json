@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "typeRoots": [
+      "./.gas-sync/typings"
+    ],
+    "types": [
+      "google-apps-script"
+    ]
+  }
+}
