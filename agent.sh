@@ -85,7 +85,7 @@ cleanup() {
 
 validate_command() {
     case "$1" in
-        health|inventory)
+        health|inventory|security)
             return 0
             ;;
         help|-h|--help)
@@ -116,6 +116,7 @@ Usage:
 Commands:
     health       Run health checks
     inventory    Inspect target
+    security     Audit host security posture
     help         Show this help
 
 Targets:
@@ -124,6 +125,7 @@ Targets:
 Examples:
     $SCRIPT_NAME health host
     $SCRIPT_NAME inventory host
+    $SCRIPT_NAME security host
 EOF
 }
 
@@ -185,6 +187,13 @@ main() {
             inventory_host
             stop_timer
             emit_inventory_result
+            ;;
+
+        security)
+            start_timer
+            security_host
+            stop_timer
+            emit_security_result
             ;;
     esac
 }

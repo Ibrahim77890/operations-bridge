@@ -103,6 +103,10 @@ validate_command_target() {
             return 0
             ;;
 
+        security:host)
+            return 0
+            ;;
+
         *)
             return 1
             ;;

@@ -13,7 +13,8 @@ const CONFIG = {
 
 const COMMANDS = {
   health: { targets: ['host'], parameters: [] },
-  inventory: { targets: ['host'], parameters: [] }
+  inventory: { targets: ['host'], parameters: [] },
+  security: { targets: ['host'], parameters: [] }
 };
 
 function initializeSheet() {
@@ -27,9 +28,10 @@ function initializeSheet() {
     'Result', 'Started At', 'Finished At'
   ]]);
   sheet.getRange(1, 1, 1, 8).setFontWeight('bold');
-  sheet.getRange(2, 1, 2, 3).setValues([
+  sheet.getRange(2, 1, 3, 3).setValues([
     ['health', 'host', ''],
-    ['inventory', 'host', '']
+    ['inventory', 'host', ''],
+    ['security', 'host', '']
   ]);
   sheet.autoResizeColumns(1, 8);
 }
