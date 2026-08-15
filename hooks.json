@@ -1,0 +1,7 @@
+[
+  {
+    "id": "run-script",
+    "execute-command": "./bridge.sh",
+    "command-working-directory": "/"
+  }
+]

@@ -232,6 +232,8 @@ handle_connection() {
 
     local content_length=0
     local authorization_key=""
+    local header_name=""
+    local header_value=""
 
     while IFS= read -r header; do
 
@@ -241,34 +243,24 @@ handle_connection() {
         # Empty line means headers are finished.
         [[ -z "$header" ]] && break
 
-        case "$header" in
+        header_name="${header%%:*}"
+        header_value="${header#*:}"
+        header_name="$(printf '%s' "$header_name" | tr '[:upper:]' '[:lower:]')"
+        header_value="$(printf '%s' "$header_value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
-            Content-Length:*)
-
-                content_length="${header#Content-Length:}"
-
-                # Remove every whitespace character.
-                content_length="${content_length//[[:space:]]/}"
-
+        case "$header_name" in
+            content-length)
+                content_length="${header_value//[[:space:]]/}"
                 ;;
-
-            X-OpsBridge-Key:*)
-
-                authorization_key="${header#X-OpsBridge-Key:}"
-
-                # Remove leading/trailing whitespace.
-                authorization_key="$(
-                    printf '%s' "$authorization_key" |
-                    sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
-                )"
-
+            x-opsbridge-key)
+                authorization_key="$header_value"
                 ;;
-
         esac
 
     done
 
     log "Content-Length parsed as: [$content_length]"
+    log "Auth header present: $([[ -n "$authorization_key" ]] && printf yes || printf no)"
 
     # --------------------------------------------------------
     # Validate HTTP version
