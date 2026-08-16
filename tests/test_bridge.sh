@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-body='{"command":"diagnose","target":"host","parameters":{}}'
+body="{\"request_id\":\"REQ-test-bridge-$$\",\"command\":\"diagnose\",\"target\":\"host\",\"parameters\":{}}"
 length="$(printf '%s' "$body" | wc -c | tr -dc '0-9')"
 request_file="$(mktemp)"
 response_file="$(mktemp)"
@@ -19,7 +19,8 @@ printf '%s' "$body" >>"$request_file"
 
 OPSBRIDGE_KEY=test-key ./bridge.sh --connection <"$request_file" >"$response_file"
 
-tail -n 1 "$response_file" |
+awk 'body {print} $0 == "" || $0 == "\r" {body = 1}' "$response_file" |
+    tr -d '\r' |
     jq -e '.success == true and .result.command == "diagnose"' >/dev/null
 
 printf 'test_bridge: OK\n'

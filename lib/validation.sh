@@ -1,5 +1,8 @@
 declare -gA OPS_PARAMS=()
 
+MAX_PARAMETER_KEY_LENGTH="${OPSBRIDGE_MAX_PARAMETER_KEY_LENGTH:-64}"
+MAX_PARAMETER_VALUE_LENGTH="${OPSBRIDGE_MAX_PARAMETER_VALUE_LENGTH:-256}"
+
 validate_command() {
     case "$1" in
         health|inventory|security|diagnose)
@@ -90,6 +93,23 @@ validate_operation_parameter() {
     esac
 }
 
+validate_parameter_token_shape() {
+    local key="$1"
+    local value="$2"
+
+    if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        die "Invalid parameter name: $key"
+    fi
+
+    if (( ${#key} > MAX_PARAMETER_KEY_LENGTH )); then
+        die "Parameter name is too long: $key"
+    fi
+
+    if (( ${#value} > MAX_PARAMETER_VALUE_LENGTH )); then
+        die "Parameter value is too long: $key"
+    fi
+}
+
 parse_parameters() {
     local command="$1"
     local parameter_string="${2:-}"
@@ -112,6 +132,7 @@ parse_parameters() {
         [[ -n "$key" ]] || die "Invalid parameter: $token"
         [[ -n "$value" ]] || die "Parameter $key must have a value"
 
+        validate_parameter_token_shape "$key" "$value"
         validate_operation_parameter "$command" "$key" "$value"
         OPS_PARAMS["$key"]="$value"
     done

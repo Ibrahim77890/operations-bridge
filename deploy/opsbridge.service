@@ -1,0 +1,22 @@
+[Unit]
+Description=OpsBridge HTTP Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opsbridge
+Group=opsbridge
+WorkingDirectory=/opt/opsbridge
+EnvironmentFile=/etc/opsbridge/opsbridge.env
+ExecStart=/opt/opsbridge/bridge.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp/opsbridge
+
+[Install]
+WantedBy=multi-user.target

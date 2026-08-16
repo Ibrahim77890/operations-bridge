@@ -1,0 +1,10 @@
+{
+  "files.exclude": {
+    ".gas-sync": true,
+    "jsconfig.json": true
+  },
+  "search.exclude": {
+    ".gas-sync": true,
+    "jsconfig.json": true
+  }
+}

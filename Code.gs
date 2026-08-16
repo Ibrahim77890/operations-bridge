@@ -2,6 +2,8 @@ const CONFIG = {
   SHEET_NAME: 'Commands',
   HISTORY_SHEET_NAME: 'ExecutionHistory',
   SCHEDULES_SHEET_NAME: 'Schedules',
+  SECURITY_AUDIT_SHEET_NAME: 'SecurityAudit',
+  DASHBOARD_SHEET_NAME: 'Dashboard',
   COMMAND_COLUMN: 1,
   TARGET_COLUMN: 2,
   PARAMETERS_COLUMN: 3,
@@ -27,7 +29,7 @@ const COMMANDS = {
       include_network: { type: 'boolean' }
     }
   },
-  security: { targets: ['host'], parameters: [] },
+  security: { targets: ['host'], parameters: {} },
   diagnose: {
     targets: ['host'],
     parameters: {
@@ -67,6 +69,8 @@ function initializeSheet() {
   sheet.autoResizeColumns(1, 8);
   initializeHistorySheet();
   initializeSchedulesSheet();
+  initializeSecurityAuditSheet();
+  updateDashboard();
 }
 
 function initializeHistorySheet() {
@@ -100,6 +104,20 @@ function initializeSchedulesSheet() {
       [true, 'inventory', 'host', 'include_network=true', 'daily', '']
     ]);
     sheet.autoResizeColumns(1, 6);
+  }
+}
+
+function initializeSecurityAuditSheet() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = spreadsheet.getSheetByName(CONFIG.SECURITY_AUDIT_SHEET_NAME);
+  if (!sheet) sheet = spreadsheet.insertSheet(CONFIG.SECURITY_AUDIT_SHEET_NAME);
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 7).setValues([[
+      'Timestamp', 'Event', 'Status', 'Message', 'Command', 'Target', 'Request ID'
+    ]]);
+    sheet.getRange(1, 1, 1, 7).setFontWeight('bold');
+    sheet.autoResizeColumns(1, 7);
   }
 }
 
@@ -157,6 +175,24 @@ function writeExecutionHistory(rowData, response, status, startedAt, finishedAt)
     finishedAt,
     durationMs,
     JSON.stringify(rowData.parameters || {})
+  ]);
+}
+
+function writeSecurityAudit(event, status, message, payload) {
+  initializeSecurityAuditSheet();
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(CONFIG.SECURITY_AUDIT_SHEET_NAME);
+
+  sheet.appendRow([
+    new Date(),
+    event,
+    status,
+    message,
+    payload?.command || '',
+    payload?.target || '',
+    payload?.request_id || ''
   ]);
 }
 
@@ -237,7 +273,12 @@ function buildCommandPayload(command, target, parameters) {
   const normalizedParameters = parameters || {};
   validateCommand(command, target);
   validateParameters(command, normalizedParameters);
-  return { command, target, parameters: normalizedParameters };
+  return {
+    request_id: `REQ-${Utilities.getUuid()}`,
+    command,
+    target,
+    parameters: normalizedParameters
+  };
 }
 
 function getBridgeUrl() {
@@ -253,10 +294,13 @@ function getBridgeKey() {
 }
 
 function callBridge(payload) {
+  const requestPayload = Object.assign({}, payload, {
+    request_id: payload.request_id || `REQ-${Utilities.getUuid()}`
+  });
   const options = {
     method: 'post',
     contentType: 'application/json',
-    payload: JSON.stringify(payload),
+    payload: JSON.stringify(requestPayload),
     headers: { 'X-OpsBridge-Key': getBridgeKey() },
     muteHttpExceptions: true,
     followRedirects: false
@@ -266,7 +310,9 @@ function callBridge(payload) {
   try {
     response = UrlFetchApp.fetch(getBridgeUrl(), options);
   } catch (error) {
-    throw new Error(`Unable to reach OpsBridge: ${error.message}`);
+    const wrapped = new Error(`Unable to reach OpsBridge: ${error.message}`);
+    wrapped.requestPayload = requestPayload;
+    throw wrapped;
   }
 
   const statusCode = response.getResponseCode();
@@ -276,11 +322,17 @@ function callBridge(payload) {
   try {
     data = JSON.parse(body);
   } catch (error) {
-    throw new Error(`Bridge returned invalid JSON. HTTP ${statusCode}: ${body}`);
+    const wrapped = new Error(`Bridge returned invalid JSON. HTTP ${statusCode}: ${body}`);
+    wrapped.requestPayload = requestPayload;
+    wrapped.bridgeStatus = statusCode;
+    throw wrapped;
   }
 
   if (statusCode < 200 || statusCode >= 300) {
-    throw new Error(`Bridge HTTP ${statusCode}: ${data.error || body}`);
+    const wrapped = new Error(`Bridge HTTP ${statusCode}: ${data.error || body}`);
+    wrapped.requestPayload = requestPayload;
+    wrapped.bridgeStatus = statusCode;
+    throw wrapped;
   }
 
   return data;
@@ -315,6 +367,7 @@ function executeSelectedRow(row) {
 
     writeExecutionResult(rowData.sheet, row, response, startedAt, finishedAt);
     writeExecutionHistory(rowData, response, status, startedAt, finishedAt);
+    updateDashboard();
     return response;
   } catch (error) {
     const finishedAt = new Date();
@@ -322,6 +375,8 @@ function executeSelectedRow(row) {
 
     writeExecutionFailure(rowData.sheet, row, error, finishedAt);
     writeExecutionHistory(rowData, {}, status, startedAt, finishedAt);
+    writeSecurityAudit('EXECUTION_FAILURE', status, error.message, error.requestPayload || payload);
+    updateDashboard();
     throw error;
   }
 }
@@ -341,10 +396,13 @@ function executePayload(payload) {
     const response = callBridge(payload);
     const finishedAt = new Date();
     writeExecutionHistory(rowData, response, responseStatus(response), startedAt, finishedAt);
+    updateDashboard();
     return response;
   } catch (error) {
     const finishedAt = new Date();
     writeExecutionHistory(rowData, {}, classifyFailureStatus(error), startedAt, finishedAt);
+    writeSecurityAudit('EXECUTION_FAILURE', classifyFailureStatus(error), error.message, error.requestPayload || payload);
+    updateDashboard();
     throw error;
   }
 }
@@ -401,6 +459,52 @@ function createSchedulerTrigger() {
     .create();
 }
 
+function updateDashboard() {
+  initializeHistorySheet();
+
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const historySheet = spreadsheet.getSheetByName(CONFIG.HISTORY_SHEET_NAME);
+  let sheet = spreadsheet.getSheetByName(CONFIG.DASHBOARD_SHEET_NAME);
+  if (!sheet) sheet = spreadsheet.insertSheet(CONFIG.DASHBOARD_SHEET_NAME);
+
+  const lastRow = historySheet.getLastRow();
+  const rows = lastRow > 1 ? historySheet.getRange(2, 1, lastRow - 1, 8).getValues() : [];
+  const summary = {
+    total: rows.length,
+    success: 0,
+    failed: 0,
+    timeout: 0,
+    lastStatus: '',
+    lastExecution: ''
+  };
+
+  rows.forEach(row => {
+    const status = String(row[3] || '').toUpperCase();
+    if (status === 'SUCCESS') summary.success += 1;
+    if (status === 'FAILED') summary.failed += 1;
+    if (status === 'TIMEOUT') summary.timeout += 1;
+  });
+
+  if (rows.length > 0) {
+    const last = rows[rows.length - 1];
+    summary.lastExecution = last[0] || '';
+    summary.lastStatus = last[3] || '';
+  }
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, 2).setValues([['Metric', 'Value']]);
+  sheet.getRange(2, 1, 6, 2).setValues([
+    ['Total Executions', summary.total],
+    ['Successful Executions', summary.success],
+    ['Failed Executions', summary.failed],
+    ['Timed Out Executions', summary.timeout],
+    ['Last Execution ID', summary.lastExecution],
+    ['Last Status', summary.lastStatus]
+  ]);
+  sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
+  sheet.autoResizeColumns(1, 2);
+}
+
 function getActiveCommandRow() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   if (sheet.getName() !== CONFIG.SHEET_NAME) {
@@ -431,6 +535,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Run Due Schedules', 'runScheduledOperations')
     .addItem('Create Scheduler Trigger', 'createSchedulerTrigger')
+    .addItem('Update Dashboard', 'updateDashboard')
     .addSeparator()
     .addItem('Initialize Sheet', 'initializeSheet')
     .addToUi();

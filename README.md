@@ -61,7 +61,18 @@ Call it locally:
 curl -i http://127.0.0.1:8080/execute \
   -H 'Content-Type: application/json' \
   -H "X-OpsBridge-Key: $OPSBRIDGE_KEY" \
-  -d '{"command":"diagnose","target":"host","parameters":{}}'
+  -d '{"request_id":"REQ-manual-001","command":"diagnose","target":"host","parameters":{}}'
+```
+
+Each `/execute` request must use a unique `request_id`. Reusing a request ID inside the replay window is rejected.
+
+Operational endpoints:
+
+```bash
+curl -s http://127.0.0.1:8080/health | jq .
+curl -s http://127.0.0.1:8080/ready | jq .
+curl -s http://127.0.0.1:8080/metrics \
+  -H "X-OpsBridge-Key: $OPSBRIDGE_KEY" | jq .
 ```
 
 ## Tests
@@ -77,6 +88,7 @@ bash tests/test_bridge.sh
 bash tests/test_parameters.sh
 bash tests/test_reliability.sh
 bash tests/test_concurrency.sh
+bash tests/test_hardening.sh
 ```
 
 ## Scheduling
@@ -86,37 +98,23 @@ Apps Script creates three sheets:
 - `Commands`: on-demand operations.
 - `ExecutionHistory`: audit log of attempted executions.
 - `Schedules`: recurring operations.
+- `SecurityAudit`: Apps-side execution and transport failures.
+- `Dashboard`: summary view of total, successful, failed, and timed-out executions.
 
 Use the OpsBridge menu in Google Sheets:
 
 - `Run Due Schedules` executes due rows in `Schedules`.
 - `Create Scheduler Trigger` installs a 15-minute Apps Script trigger.
+- `Update Dashboard` refreshes execution counters.
 
 Apps Script uses `LockService.getScriptLock()` to prevent duplicate scheduled runs while the Bash agent still enforces its own execution lock.
 
+## Production Files
 
-
-
-
-
-
-Phase 04:
-chmod +x agent.sh bridge.sh
-./agent.sh health host | jq .
-./agent.sh inventory host | jq .
-./agent.sh security host | jq .
-./agent.sh diagnose host | jq .
-
-for cmd in health inventory security diagnose; do
-    echo "Testing $cmd"
-
-    ./agent.sh "$cmd" host |
-        jq empty
-
-    if [[ $? -eq 0 ]]; then
-        echo "PASS: $cmd returned valid JSON"
-    else
-        echo "FAIL: $cmd returned invalid JSON"
-    fi
-done
-
+- `config/defaults.env`: non-secret runtime defaults.
+- `.env.example`: template for secret environment configuration.
+- `deploy/opsbridge.service`: systemd unit for Linux deployment.
+- `install.sh`: installs files, service user, and systemd unit.
+- `uninstall.sh`: removes the systemd service while preserving config and installed files.
+- `scripts/doctor.sh`: checks bridge dependencies and runs an agent smoke test.
+- `docs/`: threat model, architecture, operations, deployment, and recovery notes.

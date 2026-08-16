@@ -1,3 +1,8 @@
-.vscode/*
-.git/*
+.env
+logs/*
+runtime/*
+!logs/.gitkeep
+!runtime/.gitkeep
+*.tmp
+*.log
 .gas-sync/*
