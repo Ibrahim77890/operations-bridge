@@ -2,6 +2,10 @@
 
 OpsBridge is a small Bash operations engine exposed through an authenticated HTTP bridge and controlled from Google Apps Script.
 
+https://github.com/user-attachments/assets/e19fa560-9302-44fb-9d31-72bf240d07e7
+
+https://github.com/user-attachments/assets/e212341c-2623-46b4-a8f8-b2189e70b972
+
 ## Commands
 
 ```bash
