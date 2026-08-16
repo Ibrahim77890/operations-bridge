@@ -63,6 +63,17 @@ validate_operation_parameter() {
     local key="$2"
     local value="$3"
 
+    case "$key" in
+        retries)
+            validate_integer_range "$key" "$value" 0 5
+            return
+            ;;
+        timeout)
+            validate_integer_range "$key" "$value" 1 300
+            return
+            ;;
+    esac
+
     case "$command:$key" in
         health:disk_threshold|health:memory_threshold)
             validate_integer_range "$key" "$value" 1 100

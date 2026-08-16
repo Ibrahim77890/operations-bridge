@@ -10,6 +10,9 @@ OpsBridge is a small Bash operations engine exposed through an authenticated HTT
 ./agent.sh inventory host
 ./agent.sh security host
 ./agent.sh diagnose host
+./agent.sh health host "disk_threshold=80 retries=1 timeout=30"
+./agent.sh diagnose host "memory_threshold=90 timeout=30"
+./agent.sh inventory host "include_network=false"
 ```
 
 Pretty-print a result:
@@ -71,7 +74,25 @@ bash tests/test_inventory.sh
 bash tests/test_security.sh
 bash tests/test_diagnose.sh
 bash tests/test_bridge.sh
+bash tests/test_parameters.sh
+bash tests/test_reliability.sh
+bash tests/test_concurrency.sh
 ```
+
+## Scheduling
+
+Apps Script creates three sheets:
+
+- `Commands`: on-demand operations.
+- `ExecutionHistory`: audit log of attempted executions.
+- `Schedules`: recurring operations.
+
+Use the OpsBridge menu in Google Sheets:
+
+- `Run Due Schedules` executes due rows in `Schedules`.
+- `Create Scheduler Trigger` installs a 15-minute Apps Script trigger.
+
+Apps Script uses `LockService.getScriptLock()` to prevent duplicate scheduled runs while the Bash agent still enforces its own execution lock.
 
 
 
@@ -98,5 +119,4 @@ for cmd in health inventory security diagnose; do
         echo "FAIL: $cmd returned invalid JSON"
     fi
 done
-
 

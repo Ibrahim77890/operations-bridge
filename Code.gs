@@ -1,6 +1,7 @@
 const CONFIG = {
   SHEET_NAME: 'Commands',
   HISTORY_SHEET_NAME: 'ExecutionHistory',
+  SCHEDULES_SHEET_NAME: 'Schedules',
   COMMAND_COLUMN: 1,
   TARGET_COLUMN: 2,
   PARAMETERS_COLUMN: 3,
@@ -37,6 +38,11 @@ const COMMANDS = {
   }
 };
 
+const COMMON_PARAMETERS = {
+  retries: { type: 'integer', min: 0, max: 5 },
+  timeout: { type: 'integer', min: 1, max: 300 }
+};
+
 function initializeSheet() {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = spreadsheet.getSheetByName(CONFIG.SHEET_NAME);
@@ -60,6 +66,7 @@ function initializeSheet() {
   sheet.getRange(2, CONFIG.STATUS_COLUMN, 7, 1).setValue('READY');
   sheet.autoResizeColumns(1, 8);
   initializeHistorySheet();
+  initializeSchedulesSheet();
 }
 
 function initializeHistorySheet() {
@@ -74,6 +81,25 @@ function initializeHistorySheet() {
     ]]);
     sheet.getRange(1, 1, 1, 8).setFontWeight('bold');
     sheet.autoResizeColumns(1, 8);
+  }
+}
+
+function initializeSchedulesSheet() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = spreadsheet.getSheetByName(CONFIG.SCHEDULES_SHEET_NAME);
+  if (!sheet) sheet = spreadsheet.insertSheet(CONFIG.SCHEDULES_SHEET_NAME);
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 6).setValues([[
+      'Enabled', 'Command', 'Target', 'Parameters', 'Frequency', 'Last Run'
+    ]]);
+    sheet.getRange(1, 1, 1, 6).setFontWeight('bold');
+    sheet.getRange(2, 1, 3, 6).setValues([
+      [true, 'health', 'host', 'disk_threshold=80 retries=1 timeout=30', '15m', ''],
+      [true, 'security', 'host', '', '6h', ''],
+      [true, 'inventory', 'host', 'include_network=true', 'daily', '']
+    ]);
+    sheet.autoResizeColumns(1, 6);
   }
 }
 
@@ -98,7 +124,7 @@ function readCommandRow(row) {
 }
 
 function writeExecutionResult(sheet, row, response, startedAt, finishedAt) {
-  sheet.getRange(row, CONFIG.STATUS_COLUMN).setValue(response.success ? 'SUCCESS' : 'FAILED');
+  sheet.getRange(row, CONFIG.STATUS_COLUMN).setValue(responseStatus(response));
   sheet.getRange(row, CONFIG.EXECUTION_ID_COLUMN).setValue(
     response.result?.execution_id || response.execution_id || ''
   );
@@ -132,6 +158,12 @@ function writeExecutionHistory(rowData, response, status, startedAt, finishedAt)
     durationMs,
     JSON.stringify(rowData.parameters || {})
   ]);
+}
+
+function responseStatus(response) {
+  if (response?.result?.status === 'TIMEOUT') return 'TIMEOUT';
+  if (response?.result?.status === 'FAILED') return 'FAILED';
+  return response?.success ? 'SUCCESS' : 'FAILED';
 }
 
 function classifyFailureStatus(error) {
@@ -172,7 +204,7 @@ function validateCommand(command, target) {
 
 function validateParameters(command, parameters) {
   const definition = COMMANDS[command];
-  const schema = definition?.parameters || {};
+  const schema = Object.assign({}, COMMON_PARAMETERS, definition?.parameters || {});
   const unknownParameters = Object.keys(parameters || {}).filter(
     parameter => !Object.prototype.hasOwnProperty.call(schema, parameter)
   );
@@ -279,7 +311,7 @@ function executeSelectedRow(row) {
   try {
     const response = callBridge(payload);
     const finishedAt = new Date();
-    const status = response.success ? 'SUCCESS' : 'FAILED';
+    const status = responseStatus(response);
 
     writeExecutionResult(rowData.sheet, row, response, startedAt, finishedAt);
     writeExecutionHistory(rowData, response, status, startedAt, finishedAt);
@@ -292,6 +324,81 @@ function executeSelectedRow(row) {
     writeExecutionHistory(rowData, {}, status, startedAt, finishedAt);
     throw error;
   }
+}
+
+function executePayload(payload) {
+  validateCommand(payload.command, payload.target);
+  validateParameters(payload.command, payload.parameters || {});
+
+  const startedAt = new Date();
+  const rowData = {
+    command: payload.command,
+    target: payload.target,
+    parameters: payload.parameters || {}
+  };
+
+  try {
+    const response = callBridge(payload);
+    const finishedAt = new Date();
+    writeExecutionHistory(rowData, response, responseStatus(response), startedAt, finishedAt);
+    return response;
+  } catch (error) {
+    const finishedAt = new Date();
+    writeExecutionHistory(rowData, {}, classifyFailureStatus(error), startedAt, finishedAt);
+    throw error;
+  }
+}
+
+function runScheduledOperations() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SCHEDULES_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return;
+
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
+    const now = new Date();
+
+    rows.forEach((row, index) => {
+      const enabled = row[0] === true;
+      const command = String(row[1]).trim().toLowerCase();
+      const target = String(row[2]).trim().toLowerCase();
+      const parameters = parseParameters(row[3]);
+      const frequency = String(row[4]).trim().toLowerCase();
+      const lastRun = row[5] instanceof Date ? row[5] : null;
+
+      if (!enabled || !isScheduleDue(frequency, lastRun, now)) return;
+
+      const payload = buildCommandPayload(command, target, parameters);
+      executePayload(payload);
+      sheet.getRange(index + 2, 6).setValue(now);
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function isScheduleDue(frequency, lastRun, now) {
+  if (!lastRun) return true;
+
+  const elapsedMs = now.getTime() - lastRun.getTime();
+  const intervalMs = frequencyToMs(frequency);
+  return elapsedMs >= intervalMs;
+}
+
+function frequencyToMs(frequency) {
+  if (frequency === 'daily') return 24 * 60 * 60 * 1000;
+  if (/^\d+m$/.test(frequency)) return Number(frequency.slice(0, -1)) * 60 * 1000;
+  if (/^\d+h$/.test(frequency)) return Number(frequency.slice(0, -1)) * 60 * 60 * 1000;
+  throw new Error(`Unsupported schedule frequency: ${frequency}`);
+}
+
+function createSchedulerTrigger() {
+  ScriptApp.newTrigger('runScheduledOperations')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
 }
 
 function getActiveCommandRow() {
@@ -321,6 +428,9 @@ function onOpen() {
     .createMenu('OpsBridge')
     .addItem('Preview Selected Row', 'previewActiveRow')
     .addItem('Execute Selected Row', 'executeActiveRow')
+    .addSeparator()
+    .addItem('Run Due Schedules', 'runScheduledOperations')
+    .addItem('Create Scheduler Trigger', 'createSchedulerTrigger')
     .addSeparator()
     .addItem('Initialize Sheet', 'initializeSheet')
     .addToUi();

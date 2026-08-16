@@ -29,13 +29,13 @@ json_error() {
 }
 
 
-json_success() {
+json_agent_result() {
     local result="$1"
 
     jq -cn \
         --argjson result "$result" \
         '{
-            success: true,
+            success: (($result.status // "") != "FAILED" and ($result.status // "") != "TIMEOUT"),
             execution_id: ($result.execution_id // ""),
             result: $result
         }'
@@ -143,6 +143,11 @@ execute_agent() {
     set -e
 
     if [[ "$exit_code" -ne 0 ]]; then
+        if jq -e . >/dev/null 2>&1 <<< "$result"; then
+            rm -f "$error_file"
+            json_agent_result "$result"
+            return
+        fi
 
         local error_message
 
@@ -171,7 +176,7 @@ execute_agent() {
         return
     fi
 
-    json_success "$result"
+    json_agent_result "$result"
 }
 
 
