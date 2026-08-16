@@ -123,6 +123,7 @@ execute_agent() {
 
     local command="$1"
     local target="$2"
+    local parameters="${3:-}"
 
     local result
     local exit_code
@@ -133,7 +134,7 @@ execute_agent() {
     set +e
 
     result="$(
-        "$AGENT" "$command" "$target" \
+        "$AGENT" "$command" "$target" "$parameters" \
         2>"$error_file"
     )"
 
@@ -194,6 +195,7 @@ process_request() {
 
 
     local target
+    local parameters
 
     target="$(
         jq -er '.target // empty' <<< "$request"
@@ -202,6 +204,22 @@ process_request() {
         return
     }
 
+    parameters="$(
+        jq -er '
+            (.parameters // {}) as $parameters |
+            if ($parameters | type) != "object" then
+                error("parameters must be an object")
+            else
+                $parameters |
+                to_entries |
+                map("\(.key)=\(.value|tostring)") |
+                join(" ")
+            end
+        ' <<< "$request"
+    )" || {
+        json_error "Invalid parameters"
+        return
+    }
 
     if ! validate_command_target "$command" "$target"; then
 
@@ -212,7 +230,7 @@ process_request() {
     fi
 
 
-    execute_agent "$command" "$target"
+    execute_agent "$command" "$target" "$parameters"
 }
 
 

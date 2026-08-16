@@ -15,7 +15,12 @@ run_inventory() {
     INVENTORY_CPU_JSON="$(get_cpu_info)"
     INVENTORY_MEMORY_JSON="$(get_memory_info)"
     INVENTORY_DISK_JSON="$(get_disk_info)"
-    INVENTORY_NETWORK_JSON="$(get_network_info)"
+
+    if [[ "$(param_get "include_network" "true")" == "true" ]]; then
+        INVENTORY_NETWORK_JSON="$(get_network_info)"
+    else
+        INVENTORY_NETWORK_JSON="$(jq -n '{included: false, interfaces: []}')"
+    fi
 }
 
 emit_inventory_result() {

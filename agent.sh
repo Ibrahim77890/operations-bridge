@@ -62,14 +62,14 @@ cleanup() {
     fi
 
     if [[ -n "${LOCK_DIR:-}" && -d "$LOCK_DIR" ]]; then
-        rmdir "$LOCK_DIR"
+        rmdir "$LOCK_DIR" 2>/dev/null || true
     fi
 }
 
 usage() {
     cat <<EOF
 Usage:
-    $SCRIPT_NAME <command> <target>
+    $SCRIPT_NAME <command> <target> [parameters]
 
 Commands:
     health       Run health checks
@@ -83,6 +83,7 @@ Targets:
 
 Examples:
     $SCRIPT_NAME health host
+    $SCRIPT_NAME health host "disk_threshold=80"
     $SCRIPT_NAME inventory host
     $SCRIPT_NAME security host
     $SCRIPT_NAME diagnose host
@@ -141,6 +142,7 @@ main() {
 
     local command="${1:-}"
     local target="${2:-}"
+    local parameters="${3:-}"
 
     EXECUTION_ID="$(generate_execution_id)"
 
@@ -159,6 +161,7 @@ main() {
     validate_command "$command"
     [[ -n "$target" ]] || die "Target is required"
     validate_target "$target"
+    parse_parameters "$command" "$parameters"
 
     setup_workspace
     info "Execution ID: $EXECUTION_ID"

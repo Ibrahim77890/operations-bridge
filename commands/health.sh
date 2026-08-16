@@ -71,12 +71,14 @@ check_cpu() {
 
 check_memory() {
     local percentage
+    local warning_threshold
 
     info "Checking memory"
 
     percentage="$(memory_used_percent)"
+    warning_threshold="$(param_get "memory_threshold" "80")"
 
-    if (( percentage < 80 )); then
+    if (( percentage < warning_threshold )); then
         result_add "memory" "OK" "${percentage}%"
     elif (( percentage < 90 )); then
         result_add "memory" "WARNING" "${percentage}%"
@@ -87,13 +89,15 @@ check_memory() {
 
 check_disk() {
     local usage
+    local warning_threshold
 
     info "Checking disk"
 
     usage="$(disk_used_percent)"
     [[ "$usage" =~ ^[0-9]+$ ]] || usage=0
+    warning_threshold="$(param_get "disk_threshold" "80")"
 
-    if (( usage < 80 )); then
+    if (( usage < warning_threshold )); then
         result_add "disk" "OK" "${usage}%"
     elif (( usage < 90 )); then
         result_add "disk" "WARNING" "${usage}%"

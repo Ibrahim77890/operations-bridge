@@ -17,14 +17,20 @@ diagnose_host() {
 diagnose_cpu_pressure() {
     local load
     local cores
+    local threshold
+    local warning_load
+    local critical_load
 
     load="$(cpu_load_1m)"
     cores="$(nproc 2>/dev/null || printf '1')"
+    threshold="$(param_get "cpu_threshold" "100")"
+    warning_load="$(awk "BEGIN {printf \"%.2f\", $cores * ($threshold / 100)}")"
+    critical_load="$(awk "BEGIN {printf \"%.2f\", $warning_load * 2}")"
 
-    if awk "BEGIN {exit !($load >= $cores * 2)}"; then
-        diagnose_add_finding "cpu" "CRITICAL" "1-minute load is ${load}, above 2x CPU cores"
-    elif awk "BEGIN {exit !($load >= $cores)}"; then
-        diagnose_add_finding "cpu" "WARN" "1-minute load is ${load}, above CPU core count"
+    if awk "BEGIN {exit !($load >= $critical_load)}"; then
+        diagnose_add_finding "cpu" "CRITICAL" "1-minute load is ${load}, above critical threshold ${critical_load}"
+    elif awk "BEGIN {exit !($load >= $warning_load)}"; then
+        diagnose_add_finding "cpu" "WARN" "1-minute load is ${load}, above threshold ${warning_load}"
     else
         diagnose_add_finding "cpu" "OK" "CPU load is within expected range"
     fi
@@ -32,12 +38,14 @@ diagnose_cpu_pressure() {
 
 diagnose_memory_pressure() {
     local percentage
+    local threshold
 
     percentage="$(memory_used_percent)"
+    threshold="$(param_get "memory_threshold" "85")"
 
     if (( percentage >= 95 )); then
         diagnose_add_finding "memory" "CRITICAL" "Memory usage is ${percentage}%"
-    elif (( percentage >= 85 )); then
+    elif (( percentage >= threshold )); then
         diagnose_add_finding "memory" "WARN" "Memory usage is ${percentage}%"
     else
         diagnose_add_finding "memory" "OK" "Memory usage is ${percentage}%"
@@ -46,14 +54,16 @@ diagnose_memory_pressure() {
 
 diagnose_disk_pressure() {
     local percentage
+    local threshold
 
     percentage="$(disk_used_percent)"
     [[ "$percentage" =~ ^[0-9]+$ ]] || percentage=0
+    threshold="$(param_get "disk_threshold" "80")"
 
     if (( percentage >= 95 )); then
         diagnose_add_finding "disk" "CRITICAL" "Root filesystem is ${percentage}% full"
-    elif (( percentage >= 80 )); then
-        diagnose_add_finding "disk" "WARN" "Root filesystem is above 80%"
+    elif (( percentage >= threshold )); then
+        diagnose_add_finding "disk" "WARN" "Root filesystem is above ${threshold}%"
     else
         diagnose_add_finding "disk" "OK" "Root filesystem usage is ${percentage}%"
     fi

@@ -1,5 +1,6 @@
 const CONFIG = {
   SHEET_NAME: 'Commands',
+  HISTORY_SHEET_NAME: 'ExecutionHistory',
   COMMAND_COLUMN: 1,
   TARGET_COLUMN: 2,
   PARAMETERS_COLUMN: 3,
@@ -12,10 +13,28 @@ const CONFIG = {
 };
 
 const COMMANDS = {
-  health: { targets: ['host'], parameters: [] },
-  inventory: { targets: ['host'], parameters: [] },
+  health: {
+    targets: ['host'],
+    parameters: {
+      disk_threshold: { type: 'integer', min: 1, max: 100 },
+      memory_threshold: { type: 'integer', min: 1, max: 100 }
+    }
+  },
+  inventory: {
+    targets: ['host'],
+    parameters: {
+      include_network: { type: 'boolean' }
+    }
+  },
   security: { targets: ['host'], parameters: [] },
-  diagnose: { targets: ['host'], parameters: [] }
+  diagnose: {
+    targets: ['host'],
+    parameters: {
+      cpu_threshold: { type: 'integer', min: 1, max: 100 },
+      memory_threshold: { type: 'integer', min: 1, max: 100 },
+      disk_threshold: { type: 'integer', min: 1, max: 100 }
+    }
+  }
 };
 
 function initializeSheet() {
@@ -29,13 +48,33 @@ function initializeSheet() {
     'Result', 'Started At', 'Finished At'
   ]]);
   sheet.getRange(1, 1, 1, 8).setFontWeight('bold');
-  sheet.getRange(2, 1, 4, 3).setValues([
+  sheet.getRange(2, 1, 7, 3).setValues([
     ['health', 'host', ''],
     ['inventory', 'host', ''],
     ['security', 'host', ''],
-    ['diagnose', 'host', '']
+    ['diagnose', 'host', ''],
+    ['health', 'host', 'disk_threshold=80'],
+    ['diagnose', 'host', 'memory_threshold=90'],
+    ['inventory', 'host', 'include_network=true']
   ]);
+  sheet.getRange(2, CONFIG.STATUS_COLUMN, 7, 1).setValue('READY');
   sheet.autoResizeColumns(1, 8);
+  initializeHistorySheet();
+}
+
+function initializeHistorySheet() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = spreadsheet.getSheetByName(CONFIG.HISTORY_SHEET_NAME);
+  if (!sheet) sheet = spreadsheet.insertSheet(CONFIG.HISTORY_SHEET_NAME);
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 8).setValues([[
+      'Execution ID', 'Command', 'Target', 'Status', 'Started',
+      'Finished', 'Duration', 'Parameters'
+    ]]);
+    sheet.getRange(1, 1, 1, 8).setFontWeight('bold');
+    sheet.autoResizeColumns(1, 8);
+  }
 }
 
 function getCommandsSheet() {
@@ -68,9 +107,35 @@ function writeExecutionResult(sheet, row, response, startedAt, finishedAt) {
 }
 
 function writeExecutionFailure(sheet, row, error, finishedAt) {
-  sheet.getRange(row, CONFIG.STATUS_COLUMN).setValue('FAILED');
+  sheet.getRange(row, CONFIG.STATUS_COLUMN).setValue(classifyFailureStatus(error));
   sheet.getRange(row, CONFIG.RESULT_COLUMN).setValue(error.message);
   sheet.getRange(row, CONFIG.FINISHED_AT_COLUMN).setValue(finishedAt);
+}
+
+function writeExecutionHistory(rowData, response, status, startedAt, finishedAt) {
+  initializeHistorySheet();
+
+  const historySheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(CONFIG.HISTORY_SHEET_NAME);
+  const result = response?.result || {};
+  const executionId = result.execution_id || response?.execution_id || '';
+  const durationMs = result.duration_ms || '';
+
+  historySheet.appendRow([
+    executionId,
+    rowData.command,
+    rowData.target,
+    status,
+    startedAt,
+    finishedAt,
+    durationMs,
+    JSON.stringify(rowData.parameters || {})
+  ]);
+}
+
+function classifyFailureStatus(error) {
+  return /timeout|timed out/i.test(error.message) ? 'TIMEOUT' : 'FAILED';
 }
 
 function validateRow(row) {
@@ -107,13 +172,32 @@ function validateCommand(command, target) {
 
 function validateParameters(command, parameters) {
   const definition = COMMANDS[command];
-  const allowedParameters = definition?.parameters || [];
+  const schema = definition?.parameters || {};
   const unknownParameters = Object.keys(parameters || {}).filter(
-    parameter => !allowedParameters.includes(parameter)
+    parameter => !Object.prototype.hasOwnProperty.call(schema, parameter)
   );
 
   if (unknownParameters.length > 0) {
     throw new Error(`Unsupported parameter(s) for "${command}": ${unknownParameters.join(', ')}`);
+  }
+
+  Object.keys(parameters || {}).forEach(parameter => {
+    validateParameterValue(parameter, parameters[parameter], schema[parameter]);
+  });
+}
+
+function validateParameterValue(name, value, definition) {
+  if (definition.type === 'integer') {
+    if (!/^\d+$/.test(String(value))) throw new Error(`Parameter "${name}" must be an integer.`);
+
+    const numberValue = Number(value);
+    if (numberValue < definition.min || numberValue > definition.max) {
+      throw new Error(`Parameter "${name}" must be between ${definition.min} and ${definition.max}.`);
+    }
+  }
+
+  if (definition.type === 'boolean' && !['true', 'false'].includes(String(value))) {
+    throw new Error(`Parameter "${name}" must be true or false.`);
   }
 }
 
@@ -184,6 +268,7 @@ function previewSelectedRow(row) {
 
 function executeSelectedRow(row) {
   const rowData = readCommandRow(row);
+  const payload = buildCommandPayload(rowData.command, rowData.target, rowData.parameters);
   const startedAt = new Date();
 
   rowData.sheet.getRange(row, CONFIG.STATUS_COLUMN).setValue('RUNNING');
@@ -192,14 +277,19 @@ function executeSelectedRow(row) {
   rowData.sheet.getRange(row, CONFIG.RESULT_COLUMN).clearContent();
 
   try {
-    const payload = buildCommandPayload(rowData.command, rowData.target, rowData.parameters);
     const response = callBridge(payload);
     const finishedAt = new Date();
+    const status = response.success ? 'SUCCESS' : 'FAILED';
+
     writeExecutionResult(rowData.sheet, row, response, startedAt, finishedAt);
+    writeExecutionHistory(rowData, response, status, startedAt, finishedAt);
     return response;
   } catch (error) {
     const finishedAt = new Date();
+    const status = classifyFailureStatus(error);
+
     writeExecutionFailure(rowData.sheet, row, error, finishedAt);
+    writeExecutionHistory(rowData, {}, status, startedAt, finishedAt);
     throw error;
   }
 }
