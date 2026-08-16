@@ -2,7 +2,18 @@
 
 set -Eeuo pipefail
 
-source "$(dirname "$0")/operations.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$SCRIPT_DIR/lib/logging.sh"
+source "$SCRIPT_DIR/lib/json.sh"
+source "$SCRIPT_DIR/lib/validation.sh"
+source "$SCRIPT_DIR/lib/system.sh"
+source "$SCRIPT_DIR/lib/network.sh"
+source "$SCRIPT_DIR/lib/security.sh"
+source "$SCRIPT_DIR/commands/health.sh"
+source "$SCRIPT_DIR/commands/inventory.sh"
+source "$SCRIPT_DIR/commands/security.sh"
+source "$SCRIPT_DIR/commands/diagnose.sh"
 
 readonly AGENT_VERSION="0.1.0"
 readonly SCRIPT_NAME="$(basename "$0")"
@@ -11,7 +22,6 @@ WORK_DIR=""
 EXECUTION_ID=""
 START_TIME=0
 END_TIME=0
-
 LOCK_FILE="/tmp/opsbridge.lock"
 LOCK_FD=200
 LOCK_DIR=""
@@ -32,33 +42,6 @@ acquire_lock() {
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         die "Another Operations Bridge execution is already running"
     fi
-}
-
-log() {
-    local level="$1"
-    shift
-
-    printf '[%s] [%s] %s\n' \
-        "$(date '+%Y-%m-%d %H:%M:%S')" \
-        "$level" \
-        "$*" >&2
-}
-
-info() {
-    log "INFO" "$@"
-}
-
-warn() {
-    log "WARN" "$@"
-}
-
-error() {
-    log "ERROR" "$@"
-}
-
-die() {
-    error "$*"
-    exit 1
 }
 
 on_error() {
@@ -83,31 +66,6 @@ cleanup() {
     fi
 }
 
-validate_command() {
-    case "$1" in
-        health|inventory|security)
-            return 0
-            ;;
-        help|-h|--help)
-            return 0
-            ;;
-        *)
-            die "Unsupported command: $1"
-            ;;
-    esac
-}
-
-validate_target() {
-    case "$1" in
-        host)
-            return 0
-            ;;
-        *)
-            die "Unsupported target: $1"
-            ;;
-    esac
-}
-
 usage() {
     cat <<EOF
 Usage:
@@ -117,6 +75,7 @@ Commands:
     health       Run health checks
     inventory    Inspect target
     security     Audit host security posture
+    diagnose     Diagnose likely host problems
     help         Show this help
 
 Targets:
@@ -126,6 +85,7 @@ Examples:
     $SCRIPT_NAME health host
     $SCRIPT_NAME inventory host
     $SCRIPT_NAME security host
+    $SCRIPT_NAME diagnose host
 EOF
 }
 
@@ -147,9 +107,38 @@ duration_ms() {
     printf '%s' "$((END_TIME - START_TIME))"
 }
 
+dispatch_command() {
+    local command="$1"
+
+    start_timer
+
+    case "$command" in
+        health)
+            health_host
+            stop_timer
+            emit_health_result
+            ;;
+        inventory)
+            inventory_host
+            stop_timer
+            emit_inventory_result
+            ;;
+        security)
+            security_host
+            stop_timer
+            emit_security_result
+            ;;
+        diagnose)
+            diagnose_host
+            stop_timer
+            emit_diagnose_result
+            ;;
+    esac
+}
+
 main() {
     acquire_lock
-    
+
     local command="${1:-}"
     local target="${2:-}"
 
@@ -173,35 +162,10 @@ main() {
 
     setup_workspace
     info "Execution ID: $EXECUTION_ID"
-
-    case "$command" in
-        health)
-            start_timer
-            health_host
-            stop_timer
-            emit_health_result
-            ;;
-
-        inventory)
-            start_timer
-            inventory_host
-            stop_timer
-            emit_inventory_result
-            ;;
-
-        security)
-            start_timer
-            security_host
-            stop_timer
-            emit_security_result
-            ;;
-    esac
+    dispatch_command "$command"
 }
-
 
 trap on_error ERR
 trap cleanup EXIT
-
-
 
 main "$@"

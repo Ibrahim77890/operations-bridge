@@ -14,7 +14,8 @@ const CONFIG = {
 const COMMANDS = {
   health: { targets: ['host'], parameters: [] },
   inventory: { targets: ['host'], parameters: [] },
-  security: { targets: ['host'], parameters: [] }
+  security: { targets: ['host'], parameters: [] },
+  diagnose: { targets: ['host'], parameters: [] }
 };
 
 function initializeSheet() {
@@ -28,10 +29,11 @@ function initializeSheet() {
     'Result', 'Started At', 'Finished At'
   ]]);
   sheet.getRange(1, 1, 1, 8).setFontWeight('bold');
-  sheet.getRange(2, 1, 3, 3).setValues([
+  sheet.getRange(2, 1, 4, 3).setValues([
     ['health', 'host', ''],
     ['inventory', 'host', ''],
-    ['security', 'host', '']
+    ['security', 'host', ''],
+    ['diagnose', 'host', '']
   ]);
   sheet.autoResizeColumns(1, 8);
 }
@@ -232,4 +234,41 @@ function onOpen() {
     .addSeparator()
     .addItem('Initialize Sheet', 'initializeSheet')
     .addToUi();
+}
+
+function testBridgeConnection() {
+  const payload = {
+    command: 'health',
+    target: 'host',
+    parameters: {}
+  };
+
+  const response = callBridge(payload);
+
+  Logger.log(
+    JSON.stringify(response, null, 2)
+  );
+}
+
+function testTask4Commands() {
+  const commands = [
+    'health',
+    'inventory',
+    'security',
+    'diagnose'
+  ];
+
+  commands.forEach(command => {
+    const payload = {
+      command: command,
+      target: 'host',
+      parameters: {}
+    };
+
+    const response = callBridge(payload);
+
+    Logger.log(
+      `${command}: ${JSON.stringify(response)}`
+    );
+  });
 }
